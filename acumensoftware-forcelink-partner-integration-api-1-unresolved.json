@@ -1,0 +1,849 @@
+{
+  "openapi" : "3.0.3",
+  "info" : {
+    "title" : "Forcelink Partner Integration API - Momentum Dashboard POC",
+    "version" : "1",
+    "description" : "Scoped, read-only partner API surface prepared for the Momentum dashboard proof-of-concept, covering time & attendance, proof-of-service (completed work orders), and stock management only.\n\n## Scope notes (per use-case responses received 2026-09-10)\n\n- **Time & attendance**: clock in/out timestamps, late/absent flag, and leave status only, at employee-id + site (org unit) granularity, per shift/day. No real-time/live status in this POC.\n- **Proof of service**: completed work orders only, grouped by site. SLA status/breach-flag calculation is explicitly out of scope for this exercise and will be specified at a later stage - this surface returns raw work-order and timestamp data only.\n- **Stock management**: on-hand quantities and stock movements/transactions, grouped by store, with both current and historical data. Reorder thresholds are not included.\n\n## Auth\n\nAPI-key auth via the `X-Api-Key` header (see `apiKeyAuth` security scheme). A dedicated UAT key, scoped to read-only access and to the specific sites agreed with Momentum, will be issued separately once this spec is confirmed.\n\n## Pagination\n\nAll endpoints here return list payloads and are paginated via `page` / `per_page` query parameters, consistent with the core API.",
+    "contact" : {
+      "name" : "Acumen Software - Forcelink integrations",
+      "email" : "support@acumensoft.net"
+    }
+  },
+  "servers" : [ {
+    "description" : "SwaggerHub API Auto Mocking",
+    "url" : "https://virtserver.swaggerhub.com/acumensoftware/forcelink-partner-integration-api/1"
+  } ],
+  "security" : [ {
+    "apiKeyAuth" : [ ]
+  }, {
+    "bearerAuth" : [ ]
+  } ],
+  "tags" : [ {
+    "name" : "Attendance",
+    "description" : "Time & attendance shift records."
+  }, {
+    "name" : "ServiceProof",
+    "description" : "Proof-of-service: completed work orders, by site."
+  }, {
+    "name" : "Stock",
+    "description" : "On-hand stock levels and stock movements, by store."
+  } ],
+  "paths" : {
+    "/attendance/shift-records" : {
+      "get" : {
+        "operationId" : "Attendance_getShiftRecords",
+        "tags" : [ "Attendance" ],
+        "summary" : "Per-shift attendance records for a date range.",
+        "description" : "Returns one record per employee per shift/day within the requested range: clock in/out timestamps, a derived late/absent flag, and leave status. Grouped by `employeeId` + `orgUnit` (site) as agreed with Momentum. No real-time/live status - this is a per-shift/day batch view.",
+        "parameters" : [ {
+          "name" : "dateFrom",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive start of the date range (ISO-8601 date, `YYYY-MM-DD`).",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-01"
+        }, {
+          "name" : "dateTo",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive end of the date range (ISO-8601 date, `YYYY-MM-DD`). Maximum span per request is 92 days.",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-30"
+        }, {
+          "name" : "orgUnitId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single site. `orgUnit.type` is `SITE` for every value this endpoint accepts; omit to return all sites the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 4021
+        }, {
+          "name" : "employeeId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single employee/resource. Omit to return all employees at the requested site(s).",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 88213
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of shift-attendance records.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/ShiftAttendanceRecord"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/service-proof/completed-work-orders" : {
+      "get" : {
+        "operationId" : "ServiceProof_getCompletedWorkOrders",
+        "tags" : [ "ServiceProof" ],
+        "summary" : "Completed work orders for a date range, by site.",
+        "description" : "Returns work orders with status COMPLETED within the requested date range, grouped by site. Serves as proof-of-service for the POC. SLA status / breach-flag fields are intentionally not included - that calculation is out of scope for this exercise and will be spec'd at a later stage.",
+        "parameters" : [ {
+          "name" : "dateFrom",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive start of the date range (ISO-8601 date, `YYYY-MM-DD`).",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-01"
+        }, {
+          "name" : "dateTo",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive end of the date range (ISO-8601 date, `YYYY-MM-DD`). Maximum span per request is 92 days.",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-30"
+        }, {
+          "name" : "orgUnitId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single site. `orgUnit.type` is `SITE` for every value this endpoint accepts; omit to return all sites the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 4021
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of completed work orders.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/CompletedWorkOrder"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/stock/on-hand" : {
+      "get" : {
+        "operationId" : "Stock_getOnHand",
+        "tags" : [ "Stock" ],
+        "summary" : "Current on-hand stock quantities, by store.",
+        "description" : "Returns current on-hand quantity per material, grouped by store.",
+        "parameters" : [ {
+          "name" : "storeId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single store. Omit to return all stores the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 12
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of current on-hand stock rows.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/StockOnHand"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/stock/movements" : {
+      "get" : {
+        "operationId" : "Stock_getMovements",
+        "tags" : [ "Stock" ],
+        "summary" : "Stock movements/transactions for a date range, by store.",
+        "description" : "Returns stock movement/transaction history (receipts, issues, transfers, adjustments), grouped by store. Supports both current and historical queries - pass any `dateFrom`/`dateTo` range.",
+        "parameters" : [ {
+          "name" : "dateFrom",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive start of the date range (ISO-8601 date, `YYYY-MM-DD`).",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-01"
+        }, {
+          "name" : "dateTo",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive end of the date range (ISO-8601 date, `YYYY-MM-DD`). Maximum span per request is 92 days.",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-30"
+        }, {
+          "name" : "storeId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single store. Omit to return all stores the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 12
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of stock movement records.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/StockMovement"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
+    }
+  },
+  "components" : {
+    "schemas" : {
+      "ApiEnvelopeBase" : {
+        "type" : "object",
+        "description" : "Shared response shell for every partner-integration endpoint. Mirrors the envelope used by the core Forcelink v1 API so downstream consumers only need to learn one shape.",
+        "required" : [ "success", "meta" ],
+        "properties" : {
+          "success" : {
+            "type" : "boolean"
+          },
+          "data" : {
+            "nullable" : true,
+            "description" : "Payload on success. Null on error."
+          },
+          "message" : {
+            "type" : "string",
+            "nullable" : true
+          },
+          "error" : {
+            "nullable" : true,
+            "allOf" : [ {
+              "$ref" : "#/components/schemas/ApiError"
+            } ]
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/Pagination"
+          },
+          "meta" : {
+            "$ref" : "#/components/schemas/ResponseMeta"
+          }
+        }
+      },
+      "ApiError" : {
+        "type" : "object",
+        "required" : [ "code", "message" ],
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "enum" : [ "VALIDATION_ERROR", "UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND", "RATE_LIMITED", "INTERNAL_ERROR" ]
+          },
+          "message" : {
+            "type" : "string"
+          },
+          "details" : {
+            "type" : "array",
+            "items" : {
+              "type" : "object",
+              "properties" : {
+                "field" : {
+                  "type" : "string"
+                },
+                "code" : {
+                  "type" : "string"
+                },
+                "message" : {
+                  "type" : "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ResponseMeta" : {
+        "type" : "object",
+        "required" : [ "request_id", "version", "timestamp" ],
+        "properties" : {
+          "request_id" : {
+            "type" : "string",
+            "pattern" : "^req_[0-9A-HJKMNP-TV-Z]{26}$",
+            "example" : "req_01K5H8N2Q3ZC1WQ8R6M0T4X9YB"
+          },
+          "version" : {
+            "type" : "string",
+            "example" : "1"
+          },
+          "timestamp" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "Pagination" : {
+        "nullable" : true,
+        "description" : "Present on every endpoint in this spec (all are list endpoints). Follows the same shape as the core Forcelink v1 API.",
+        "type" : "object",
+        "properties" : {
+          "page" : {
+            "type" : "integer",
+            "example" : 1
+          },
+          "per_page" : {
+            "type" : "integer",
+            "example" : 50
+          },
+          "total_items" : {
+            "type" : "integer",
+            "example" : 137
+          },
+          "total_pages" : {
+            "type" : "integer",
+            "example" : 3
+          }
+        }
+      },
+      "ShiftAttendanceRecord" : {
+        "type" : "object",
+        "properties" : {
+          "employeeId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Forcelink resource/employee id."
+          },
+          "employeeCode" : {
+            "type" : "string",
+            "description" : "Employee's payroll/staff code, if configured."
+          },
+          "orgUnit" : {
+            "type" : "object",
+            "description" : "The site the shift is planned against.",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "type" : {
+                "type" : "string",
+                "enum" : [ "SITE" ]
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Depot - Bellville"
+              }
+            }
+          },
+          "shiftDate" : {
+            "type" : "string",
+            "format" : "date",
+            "description" : "Calendar date the shift falls on (per-shift/day granularity, not a live feed)."
+          },
+          "clockInTimestamp" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true,
+            "description" : "Null if the employee never clocked in for this shift."
+          },
+          "clockOutTimestamp" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "ON_TIME", "LATE", "ABSENT", "ON_LEAVE" ],
+            "description" : "Derived attendance flag for the shift."
+          },
+          "leaveStatus" : {
+            "type" : "string",
+            "enum" : [ "NONE", "PENDING", "APPROVED", "REJECTED" ],
+            "description" : "`NONE` unless a leave request overlaps this date."
+          }
+        }
+      },
+      "CompletedWorkOrder" : {
+        "type" : "object",
+        "properties" : {
+          "workOrderId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "workOrderCode" : {
+            "type" : "string",
+            "example" : "WO-2026-104822"
+          },
+          "orgUnit" : {
+            "type" : "object",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "type" : {
+                "type" : "string",
+                "enum" : [ "SITE" ]
+              },
+              "name" : {
+                "type" : "string"
+              }
+            }
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "COMPLETED" ],
+            "description" : "Fixed to COMPLETED for this exercise; SLA-status and breach-flag fields are out of scope for the POC and will be spec'd separately."
+          },
+          "workOrderType" : {
+            "type" : "string",
+            "example" : "Corrective Maintenance"
+          },
+          "description" : {
+            "type" : "string"
+          },
+          "completedDate" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "resourceId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true,
+            "description" : "Technician/resource who closed the work order, if assigned."
+          }
+        }
+      },
+      "StockOnHand" : {
+        "type" : "object",
+        "properties" : {
+          "store" : {
+            "type" : "object",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Main Store - Bellville"
+              }
+            }
+          },
+          "materialId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "materialCode" : {
+            "type" : "string",
+            "example" : "MAT-00231"
+          },
+          "materialDescription" : {
+            "type" : "string",
+            "example" : "Coupling, 25mm PVC"
+          },
+          "quantityOnHand" : {
+            "type" : "number",
+            "format" : "double"
+          },
+          "unitOfMeasure" : {
+            "type" : "string",
+            "example" : "EA"
+          },
+          "asOfTimestamp" : {
+            "type" : "string",
+            "format" : "date-time",
+            "description" : "When this on-hand snapshot was taken."
+          }
+        }
+      },
+      "StockMovement" : {
+        "type" : "object",
+        "properties" : {
+          "movementId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "store" : {
+            "type" : "object",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "name" : {
+                "type" : "string"
+              }
+            }
+          },
+          "materialId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "materialCode" : {
+            "type" : "string"
+          },
+          "materialDescription" : {
+            "type" : "string"
+          },
+          "transactionType" : {
+            "type" : "string",
+            "enum" : [ "RECEIPT", "ISSUE", "TRANSFER_IN", "TRANSFER_OUT", "ADJUSTMENT" ]
+          },
+          "quantity" : {
+            "type" : "number",
+            "format" : "double",
+            "description" : "Signed where relevant (e.g. negative for ISSUE)."
+          },
+          "transactionTimestamp" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "referenceDocument" : {
+            "type" : "string",
+            "nullable" : true,
+            "description" : "Linked work order code or purchase-order/GRN number, where applicable."
+          }
+        }
+      }
+    },
+    "parameters" : {
+      "Page" : {
+        "name" : "page",
+        "in" : "query",
+        "required" : false,
+        "description" : "1-indexed page number. Defaults to the first page.",
+        "schema" : {
+          "type" : "integer",
+          "minimum" : 1,
+          "default" : 1
+        }
+      },
+      "PerPage" : {
+        "name" : "per_page",
+        "in" : "query",
+        "required" : false,
+        "description" : "Items per page. Default 50, max 500.",
+        "schema" : {
+          "type" : "integer",
+          "minimum" : 1,
+          "maximum" : 500,
+          "default" : 50
+        }
+      }
+    },
+    "headers" : {
+      "RequestIdHeader" : {
+        "description" : "Server-generated request id, echoed from `meta.request_id`.",
+        "schema" : {
+          "type" : "string",
+          "pattern" : "^req_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "example" : "req_01K5H8N2Q3ZC1WQ8R6M0T4X9YB"
+      }
+    },
+    "responses" : {
+      "Unauthorized" : {
+        "description" : "Missing or invalid API key.",
+        "content" : {
+          "application/json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/ApiEnvelopeBase"
+            },
+            "example" : {
+              "success" : false,
+              "data" : null,
+              "message" : "Invalid or missing API key.",
+              "error" : {
+                "code" : "UNAUTHORIZED",
+                "message" : "Invalid or missing API key."
+              },
+              "pagination" : null,
+              "meta" : {
+                "request_id" : "req_01K5H8N2Q3ZC1WQ8R6M0T4X9YB",
+                "version" : "1",
+                "timestamp" : "2026-09-10T09:00:00Z"
+              }
+            }
+          }
+        }
+      },
+      "Forbidden" : {
+        "description" : "API key is valid but not scoped to the requested site/store.",
+        "content" : {
+          "application/json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/ApiEnvelopeBase"
+            },
+            "example" : {
+              "success" : false,
+              "data" : null,
+              "message" : "API key is not scoped to this site.",
+              "error" : {
+                "code" : "FORBIDDEN",
+                "message" : "API key is not scoped to this site."
+              },
+              "pagination" : null,
+              "meta" : {
+                "request_id" : "req_01K5H8N2Q3ZC1WQ8R6M0T4X9YB",
+                "version" : "1",
+                "timestamp" : "2026-09-10T09:00:00Z"
+              }
+            }
+          }
+        }
+      },
+      "ValidationError" : {
+        "description" : "A required parameter was missing or malformed (e.g. `dateFrom` after `dateTo`, or a range exceeding 92 days).",
+        "content" : {
+          "application/json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/ApiEnvelopeBase"
+            },
+            "example" : {
+              "success" : false,
+              "data" : null,
+              "message" : "dateTo must be after dateFrom.",
+              "error" : {
+                "code" : "VALIDATION_ERROR",
+                "message" : "dateTo must be after dateFrom.",
+                "details" : [ {
+                  "field" : "dateTo",
+                  "code" : "must_be_after",
+                  "message" : "Must be after dateFrom."
+                } ]
+              },
+              "pagination" : null,
+              "meta" : {
+                "request_id" : "req_01K5H8N2Q3ZC1WQ8R6M0T4X9YB",
+                "version" : "1",
+                "timestamp" : "2026-09-10T09:00:00Z"
+              }
+            }
+          }
+        }
+      },
+      "RateLimited" : {
+        "description" : "Too many requests for this API key.",
+        "content" : {
+          "application/json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/ApiEnvelopeBase"
+            }
+          }
+        }
+      },
+      "InternalError" : {
+        "description" : "Unhandled server error.",
+        "content" : {
+          "application/json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/ApiEnvelopeBase"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes" : {
+      "apiKeyAuth" : {
+        "type" : "apiKey",
+        "in" : "header",
+        "name" : "X-Api-Key",
+        "description" : "Static API key issued per integration partner, scoped to specific sites/stores and to read-only access on the endpoints in this spec. Distinct from the session-cookie auth used by the internal Forcelink v1 API; this key is not valid against `/forcelink/rest/v1/*`."
+      },
+      "bearerAuth" : {
+        "type" : "http",
+        "scheme" : "bearer",
+        "bearerFormat" : "JWT",
+        "description" : "Bearer token for testing with mock API."
+      }
+    }
+  }
+}
