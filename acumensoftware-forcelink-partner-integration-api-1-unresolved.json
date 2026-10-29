@@ -3,7 +3,7 @@
   "info" : {
     "title" : "Forcelink Partner Integration API - Momentum Dashboard POC",
     "version" : "1",
-    "description" : "Scoped, read-only partner API surface prepared for the Momentum dashboard proof-of-concept, covering time & attendance, proof-of-service (completed work orders), and stock management only.\n\n## Scope notes (per use-case responses received 2026-09-10)\n\n- **Time & attendance**: clock in/out timestamps, late/absent flag, and leave status only, at employee-id + site (org unit) granularity, per shift/day. No real-time/live status in this POC.\n- **Proof of service**: completed work orders only, grouped by site. SLA status/breach-flag calculation is explicitly out of scope for this exercise and will be specified at a later stage - this surface returns raw work-order and timestamp data only.\n- **Stock management**: on-hand quantities and stock movements/transactions, grouped by store, with both current and historical data. Reorder thresholds are not included.\n\n## Auth\n\nAPI-key auth via the `X-Api-Key` header (see `apiKeyAuth` security scheme). A dedicated UAT key, scoped to read-only access and to the specific sites agreed with Momentum, will be issued separately once this spec is confirmed.\n\n## Pagination\n\nAll endpoints here return list payloads and are paginated via `page` / `per_page` query parameters, consistent with the core API.",
+    "description" : "Scoped, read-only partner API surface prepared for the Momentum dashboard proof-of-concept, covering time & attendance, proof-of-service (completed work orders), stock management, resource lookup, escalations, QR-code customer feedback, and cleaner tracking (NFC / beacon).\n\n## Scope notes (per use-case responses received 2026-09-10)\n\n- **Time & attendance**: clock in/out timestamps, late/absent flag, and leave status only, at employee-id + site (org unit) granularity, per shift/day. No real-time/live status in this POC.\n- **Proof of service**: completed work orders only, grouped by site. SLA status/breach-flag calculation is explicitly out of scope for this exercise and will be specified at a later stage - this surface returns raw work-order and timestamp data only. `createdDate` is included so completion time (`completedDate - createdDate`) can be derived.\n- **Stock management**: on-hand quantities and stock movements/transactions, grouped by store, with both current and historical data. Reorder thresholds are not included.\n\n## Additions (per dashboard feedback, 2026-10)\n\n- **Resources**: lookup of the resources referenced by `employeeId` / `resourceId` elsewhere, with role (`CLEANER`, `SUPERVISOR`, `SITE_MANAGER`) and `supervisorId` for the reporting line.\n- **Escalations**: escalations raised from QR feedback, by supervisors, or by client request, with priority, escalation level, assignee and created / acknowledged / resolved timestamps.\n- **Customer feedback (Prestige Pulse QR codes)**: individual QR-code submissions per location with a 1-5 rating, category and optional comment.\n- **Cleaner tracking**: NFC tag scans and BLE beacon check-ins per cleaner and location. Beacon rows carry a check-out timestamp (dwell); NFC rows are point-in-time scans.\n- **Deferred**: excluding the areas covered by the Chi POC (to avoid duplicated QR / cleaner tracking dashboards) is not modelled yet - all sites return full data.\n\n## Auth\n\nAPI-key auth via the `X-Api-Key` header (see `apiKeyAuth` security scheme). A dedicated UAT key, scoped to read-only access and to the specific sites agreed with Momentum, will be issued separately once this spec is confirmed.\n\n## Pagination\n\nAll endpoints here return list payloads and are paginated via `page` / `per_page` query parameters, consistent with the core API.",
     "contact" : {
       "name" : "Acumen Software - Forcelink integrations",
       "email" : "support@acumensoft.net"
@@ -27,6 +27,18 @@
   }, {
     "name" : "Stock",
     "description" : "On-hand stock levels and stock movements, by store."
+  }, {
+    "name" : "Resources",
+    "description" : "Resource (employee / user) lookup with supervisor hierarchy."
+  }, {
+    "name" : "Escalations",
+    "description" : "Escalations and their acknowledgement / resolution timeline, by site."
+  }, {
+    "name" : "CustomerFeedback",
+    "description" : "Prestige Pulse QR-code customer feedback, by site and location."
+  }, {
+    "name" : "CleanerTracking",
+    "description" : "Cleaner NFC scans and beacon check-ins, by site and location."
   } ],
   "paths" : {
     "/attendance/shift-records" : {
@@ -386,6 +398,394 @@
           }
         }
       }
+    },
+    "/resources" : {
+      "get" : {
+        "operationId" : "Resources_getResources",
+        "tags" : [ "Resources" ],
+        "summary" : "Resource (employee / user) lookup, including supervisor hierarchy.",
+        "description" : "Returns the resources (cleaners, supervisors, site managers) at the sites the API key is scoped to. Use it to resolve the resource ids returned by the other endpoints, and `supervisorId` to roll cleaner metrics up to their supervisor. Not date-ranged.",
+        "parameters" : [ {
+          "name" : "orgUnitId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single site; omit to return all sites the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 4021
+        }, {
+          "name" : "resourceId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Return a single resource.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 88213
+        }, {
+          "name" : "role",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter by role.",
+          "schema" : {
+            "type" : "string",
+            "enum" : [ "CLEANER", "SUPERVISOR", "SITE_MANAGER" ]
+          },
+          "example" : "SUPERVISOR"
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of resources.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/Resource"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/escalations" : {
+      "get" : {
+        "operationId" : "Escalations_getEscalations",
+        "tags" : [ "Escalations" ],
+        "summary" : "Escalations raised in a date range, by site.",
+        "description" : "Returns escalations whose `createdDate` falls in the requested range. Response times are derived from `createdDate`, `acknowledgedDate` and `resolvedDate`.",
+        "parameters" : [ {
+          "name" : "dateFrom",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive start of the date range (ISO-8601 date, `YYYY-MM-DD`).",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-01"
+        }, {
+          "name" : "dateTo",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive end of the date range (ISO-8601 date, `YYYY-MM-DD`). Maximum span per request is 92 days.",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-30"
+        }, {
+          "name" : "orgUnitId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single site; omit to return all sites the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 4021
+        }, {
+          "name" : "status",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter by current status.",
+          "schema" : {
+            "type" : "string",
+            "enum" : [ "OPEN", "ACKNOWLEDGED", "RESOLVED" ]
+          },
+          "example" : "OPEN"
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of escalations.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/Escalation"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/customer-feedback/qr-responses" : {
+      "get" : {
+        "operationId" : "CustomerFeedback_getQrResponses",
+        "tags" : [ "CustomerFeedback" ],
+        "summary" : "QR-code customer feedback submissions for a date range, by site.",
+        "description" : "Returns individual Prestige Pulse QR-code submissions whose `submittedTimestamp` falls in the requested range. Low ratings may have an associated escalation (`escalationId`).",
+        "parameters" : [ {
+          "name" : "dateFrom",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive start of the date range (ISO-8601 date, `YYYY-MM-DD`).",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-01"
+        }, {
+          "name" : "dateTo",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive end of the date range (ISO-8601 date, `YYYY-MM-DD`). Maximum span per request is 92 days.",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-30"
+        }, {
+          "name" : "orgUnitId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single site; omit to return all sites the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 4021
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of QR feedback submissions.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/CustomerFeedbackResponse"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/cleaner-tracking/check-ins" : {
+      "get" : {
+        "operationId" : "CleanerTracking_getCheckIns",
+        "tags" : [ "CleanerTracking" ],
+        "summary" : "Cleaner NFC tag scans and beacon check-ins for a date range, by site.",
+        "description" : "Returns NFC scans and beacon check-ins whose `checkInTimestamp` falls in the requested range. Check-ins only occur while the cleaner is clocked in (see `/attendance/shift-records`).",
+        "parameters" : [ {
+          "name" : "dateFrom",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive start of the date range (ISO-8601 date, `YYYY-MM-DD`).",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-01"
+        }, {
+          "name" : "dateTo",
+          "in" : "query",
+          "required" : true,
+          "description" : "Inclusive end of the date range (ISO-8601 date, `YYYY-MM-DD`). Maximum span per request is 92 days.",
+          "schema" : {
+            "type" : "string",
+            "format" : "date"
+          },
+          "example" : "2026-09-30"
+        }, {
+          "name" : "orgUnitId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single site; omit to return all sites the API key is scoped to.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 4021
+        }, {
+          "name" : "resourceId",
+          "in" : "query",
+          "required" : false,
+          "description" : "Filter to a single cleaner.",
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "example" : 88213
+        }, {
+          "$ref" : "#/components/parameters/Page"
+        }, {
+          "$ref" : "#/components/parameters/PerPage"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Page of cleaner check-ins.",
+            "headers" : {
+              "X-Request-Id" : {
+                "$ref" : "#/components/headers/RequestIdHeader"
+              }
+            },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "allOf" : [ {
+                    "$ref" : "#/components/schemas/ApiEnvelopeBase"
+                  }, {
+                    "type" : "object",
+                    "required" : [ "success", "data" ],
+                    "properties" : {
+                      "success" : {
+                        "type" : "boolean",
+                        "enum" : [ true ]
+                      },
+                      "data" : {
+                        "type" : "array",
+                        "items" : {
+                          "$ref" : "#/components/schemas/CleanerCheckIn"
+                        }
+                      }
+                    }
+                  } ]
+                }
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/ValidationError"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/RateLimited"
+          },
+          "500" : {
+            "$ref" : "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components" : {
@@ -518,7 +918,7 @@
               },
               "name" : {
                 "type" : "string",
-                "example" : "Depot - Bellville"
+                "example" : "Head Office - Centurion"
               }
             }
           },
@@ -584,10 +984,15 @@
           },
           "workOrderType" : {
             "type" : "string",
-            "example" : "Corrective Maintenance"
+            "example" : "Scheduled Clean"
           },
           "description" : {
             "type" : "string"
+          },
+          "createdDate" : {
+            "type" : "string",
+            "format" : "date-time",
+            "description" : "When the work order was created/logged. Completion time = `completedDate - createdDate`."
           },
           "completedDate" : {
             "type" : "string",
@@ -597,7 +1002,7 @@
             "type" : "integer",
             "format" : "int64",
             "nullable" : true,
-            "description" : "Technician/resource who closed the work order, if assigned."
+            "description" : "Resource (cleaner) who closed the work order, if assigned. Resolve via `/resources`."
           }
         }
       },
@@ -613,7 +1018,7 @@
               },
               "name" : {
                 "type" : "string",
-                "example" : "Main Store - Bellville"
+                "example" : "Cleaning Store - Centurion"
               }
             }
           },
@@ -627,7 +1032,7 @@
           },
           "materialDescription" : {
             "type" : "string",
-            "example" : "Coupling, 25mm PVC"
+            "example" : "Toilet Paper, 2-Ply 48-Roll Pack"
           },
           "quantityOnHand" : {
             "type" : "number",
@@ -690,6 +1095,300 @@
             "type" : "string",
             "nullable" : true,
             "description" : "Linked work order code or purchase-order/GRN number, where applicable."
+          }
+        }
+      },
+      "Resource" : {
+        "type" : "object",
+        "properties" : {
+          "resourceId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Forcelink resource id. Same id space as `employeeId` (attendance), `resourceId` (work orders, check-ins) and the escalation resource fields."
+          },
+          "resourceCode" : {
+            "type" : "string",
+            "example" : "EMP88213"
+          },
+          "name" : {
+            "type" : "string",
+            "example" : "Nomsa Dlamini"
+          },
+          "role" : {
+            "type" : "string",
+            "enum" : [ "CLEANER", "SUPERVISOR", "SITE_MANAGER" ]
+          },
+          "orgUnit" : {
+            "type" : "object",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "type" : {
+                "type" : "string",
+                "enum" : [ "SITE" ]
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Head Office - Centurion"
+              }
+            }
+          },
+          "supervisorId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true,
+            "description" : "Resource id of this resource's supervisor (cleaner -> supervisor, supervisor -> site manager). Null for site managers."
+          },
+          "active" : {
+            "type" : "boolean",
+            "description" : "False once the resource has left / been deactivated."
+          }
+        }
+      },
+      "Escalation" : {
+        "type" : "object",
+        "properties" : {
+          "escalationId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "escalationCode" : {
+            "type" : "string",
+            "example" : "ESC-2026-606081"
+          },
+          "orgUnit" : {
+            "type" : "object",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "type" : {
+                "type" : "string",
+                "enum" : [ "SITE" ]
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Head Office - Centurion"
+              }
+            }
+          },
+          "location" : {
+            "type" : "object",
+            "nullable" : true,
+            "description" : "Area within the site where the QR code / NFC tag / beacon is installed.",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Level 2 - Ladies Restroom"
+              }
+            }
+          },
+          "source" : {
+            "type" : "string",
+            "enum" : [ "QR_FEEDBACK", "SUPERVISOR", "CLIENT_REQUEST" ]
+          },
+          "feedbackId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true,
+            "description" : "QR feedback submission that triggered this escalation (source `QR_FEEDBACK` only)."
+          },
+          "workOrderId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true,
+            "description" : "Reactive work order raised to action the escalation, if any."
+          },
+          "category" : {
+            "type" : "string",
+            "enum" : [ "CLEANLINESS", "CONSUMABLES", "ODOUR", "SPILL", "BROKEN_FIXTURE", "GENERAL" ]
+          },
+          "priority" : {
+            "type" : "string",
+            "enum" : [ "LOW", "MEDIUM", "HIGH", "CRITICAL" ]
+          },
+          "level" : {
+            "type" : "integer",
+            "minimum" : 1,
+            "maximum" : 3,
+            "description" : "Escalation level: 1 = supervisor, 2 = supervisor (escalated, open > 4h), 3 = site manager (open > 24h)."
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "OPEN", "ACKNOWLEDGED", "RESOLVED" ]
+          },
+          "raisedByResourceId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true,
+            "description" : "Resource who raised it (source `SUPERVISOR`); null for customer / client-raised escalations."
+          },
+          "assignedToResourceId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true,
+            "description" : "Supervisor or site manager the escalation is assigned to."
+          },
+          "createdDate" : {
+            "type" : "string",
+            "format" : "date-time",
+            "description" : "When the escalation was raised."
+          },
+          "acknowledgedDate" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true,
+            "description" : "When the assignee acknowledged it."
+          },
+          "resolvedDate" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true,
+            "description" : "When it was resolved."
+          }
+        }
+      },
+      "CustomerFeedbackResponse" : {
+        "type" : "object",
+        "properties" : {
+          "feedbackId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "orgUnit" : {
+            "type" : "object",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "type" : {
+                "type" : "string",
+                "enum" : [ "SITE" ]
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Head Office - Centurion"
+              }
+            }
+          },
+          "location" : {
+            "type" : "object",
+            "nullable" : true,
+            "description" : "Area within the site where the QR code / NFC tag / beacon is installed.",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Level 2 - Ladies Restroom"
+              }
+            }
+          },
+          "qrCodeId" : {
+            "type" : "string",
+            "example" : "QR-4021-007"
+          },
+          "rating" : {
+            "type" : "integer",
+            "minimum" : 1,
+            "maximum" : 5,
+            "description" : "1 = very poor, 5 = excellent."
+          },
+          "category" : {
+            "type" : "string",
+            "enum" : [ "CLEANLINESS", "CONSUMABLES", "ODOUR", "SPILL", "BROKEN_FIXTURE", "GENERAL" ]
+          },
+          "comment" : {
+            "type" : "string",
+            "nullable" : true,
+            "example" : "Soap dispenser empty."
+          },
+          "submittedTimestamp" : {
+            "type" : "string",
+            "format" : "date-time",
+            "description" : "When the QR form was submitted."
+          },
+          "escalationId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true,
+            "description" : "Escalation raised from this submission, if any."
+          }
+        }
+      },
+      "CleanerCheckIn" : {
+        "type" : "object",
+        "properties" : {
+          "checkInId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "resourceId" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Cleaner who checked in (see `/resources`)."
+          },
+          "orgUnit" : {
+            "type" : "object",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "type" : {
+                "type" : "string",
+                "enum" : [ "SITE" ]
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Head Office - Centurion"
+              }
+            }
+          },
+          "location" : {
+            "type" : "object",
+            "nullable" : true,
+            "description" : "Area within the site where the QR code / NFC tag / beacon is installed.",
+            "properties" : {
+              "id" : {
+                "type" : "integer",
+                "format" : "int64"
+              },
+              "name" : {
+                "type" : "string",
+                "example" : "Level 2 - Ladies Restroom"
+              }
+            }
+          },
+          "tagId" : {
+            "type" : "string",
+            "example" : "NFC-4021-004",
+            "description" : "NFC tag or beacon identifier."
+          },
+          "method" : {
+            "type" : "string",
+            "enum" : [ "NFC", "BEACON" ]
+          },
+          "checkInTimestamp" : {
+            "type" : "string",
+            "format" : "date-time",
+            "description" : "NFC scan time, or beacon entry time."
+          },
+          "checkOutTimestamp" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true,
+            "description" : "Beacon exit time (dwell). Always null for NFC scans."
           }
         }
       }

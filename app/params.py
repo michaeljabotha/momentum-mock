@@ -34,6 +34,12 @@ def validate_paging(page: int, per_page: int) -> tuple[int, int]:
     return page, per_page
 
 
+def check_enum(value: str | None, field: str, allowed: list[str]) -> None:
+    if value is not None and value not in allowed:
+        raise validation_error(
+            f"{field} must be one of: {', '.join(allowed)}.", field, "invalid_value")
+
+
 def check_org_unit_scope(org_unit_id: int | None) -> None:
     if org_unit_id is not None and org_unit_id not in SCOPED_ORG_UNIT_IDS:
         raise ApiException(403, "FORBIDDEN", "API key is not scoped to this site.")

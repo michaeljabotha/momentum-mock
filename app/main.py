@@ -10,14 +10,15 @@ from .config import (API_VERSION, DEFAULT_PER_PAGE, MAX_PER_PAGE,
                      SCOPED_ORG_UNIT_IDS, SCOPED_STORE_IDS)
 from .db import get_conn
 from .envelope import ApiException, failure, new_request_id, success
-from .params import (check_org_unit_scope, check_store_scope, pagination_block,
-                     validate_paging, validate_range)
+from .params import (check_enum, check_org_unit_scope, check_store_scope,
+                     pagination_block, validate_paging, validate_range)
 
 app = FastAPI(
     title="Forcelink Partner Integration API - Momentum Dashboard POC",
     version=API_VERSION,
     description="Mock implementation of the scoped, read-only partner API surface: "
-                "time & attendance, proof-of-service, and stock management.",
+                "time & attendance, proof-of-service, stock management, resources, "
+                "escalations, QR customer feedback, and cleaner tracking (NFC / beacon).",
 )
 
 
@@ -179,6 +180,7 @@ def get_completed_work_orders(
         "status": r["status"],
         "workOrderType": r["work_order_type"],
         "description": r["description"],
+        "createdDate": r["created_date"],
         "completedDate": r["completed_date"],
         "resourceId": r["resource_id"],
     } for r in rows]
@@ -281,6 +283,249 @@ def get_stock_movements(
         "referenceDocument": r["reference_document"],
     } for r in rows]
     return success(data, pagination, _rid(request))
+
+
+# --------------------------------------------------------------------------- #
+# Resources
+# --------------------------------------------------------------------------- #
+RESOURCE_ROLES = ["CLEANER", "SUPERVISOR", "SITE_MANAGER"]
+
+
+@app.get("/resources", tags=["Resources"],
+         summary="Resource (employee / user) lookup, including supervisor hierarchy.",
+         dependencies=[Depends(require_api_key)])
+def get_resources(
+    request: Request,
+    orgUnitId: int | None = Query(None, example=4021),
+    resourceId: int | None = Query(None, example=88213),
+    role: str | None = Query(None, example="SUPERVISOR",
+                             description="CLEANER, SUPERVISOR or SITE_MANAGER."),
+    page: int = PageQ,
+    per_page: int = PerPageQ,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    page, per_page = validate_paging(page, per_page)
+    check_org_unit_scope(orgUnitId)
+    check_enum(role, "role", RESOURCE_ROLES)
+
+    where = [f"e.org_unit_id IN ({_ph(SCOPED_ORG_UNIT_IDS)})"]
+    args: list = [*SCOPED_ORG_UNIT_IDS]
+    if orgUnitId is not None:
+        where.append("e.org_unit_id = ?")
+        args.append(orgUnitId)
+    if resourceId is not None:
+        where.append("e.id = ?")
+        args.append(resourceId)
+    if role is not None:
+        where.append("e.role = ?")
+        args.append(role)
+    clause = " AND ".join(where)
+
+    rows, pagination = _paged(
+        conn,
+        f"SELECT COUNT(*) FROM employee e WHERE {clause}",
+        f"""SELECT e.*, o.type AS org_type, o.name AS org_name
+            FROM employee e
+            JOIN org_unit o ON o.id = e.org_unit_id
+            WHERE {clause}
+            ORDER BY e.org_unit_id, e.id
+            LIMIT ? OFFSET ?""",
+        args, page, per_page)
+
+    data = [{
+        "resourceId": r["id"],
+        "resourceCode": r["employee_code"],
+        "name": r["name"],
+        "role": r["role"],
+        "orgUnit": {"id": r["org_unit_id"], "type": r["org_type"], "name": r["org_name"]},
+        "supervisorId": r["supervisor_id"],
+        "active": bool(r["active"]),
+    } for r in rows]
+    return success(data, pagination, _rid(request))
+
+
+# --------------------------------------------------------------------------- #
+# Escalations
+# --------------------------------------------------------------------------- #
+ESCALATION_STATUSES = ["OPEN", "ACKNOWLEDGED", "RESOLVED"]
+
+
+@app.get("/escalations", tags=["Escalations"],
+         summary="Escalations raised in a date range, by site.",
+         dependencies=[Depends(require_api_key)])
+def get_escalations(
+    request: Request,
+    dateFrom: str = Query(..., example="2026-09-01"),
+    dateTo: str = Query(..., example="2026-09-30"),
+    orgUnitId: int | None = Query(None, example=4021),
+    status: str | None = Query(None, example="OPEN",
+                               description="OPEN, ACKNOWLEDGED or RESOLVED."),
+    page: int = PageQ,
+    per_page: int = PerPageQ,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    start, end = validate_range(dateFrom, dateTo)
+    page, per_page = validate_paging(page, per_page)
+    check_org_unit_scope(orgUnitId)
+    check_enum(status, "status", ESCALATION_STATUSES)
+
+    where = ["date(x.created_date) BETWEEN ? AND ?",
+             f"x.org_unit_id IN ({_ph(SCOPED_ORG_UNIT_IDS)})"]
+    args: list = [start.isoformat(), end.isoformat(), *SCOPED_ORG_UNIT_IDS]
+    if orgUnitId is not None:
+        where.append("x.org_unit_id = ?")
+        args.append(orgUnitId)
+    if status is not None:
+        where.append("x.status = ?")
+        args.append(status)
+    clause = " AND ".join(where)
+
+    rows, pagination = _paged(
+        conn,
+        f"SELECT COUNT(*) FROM escalation x WHERE {clause}",
+        f"""SELECT x.*, o.type AS org_type, o.name AS org_name, l.name AS location_name
+            FROM escalation x
+            JOIN org_unit o ON o.id = x.org_unit_id
+            LEFT JOIN location l ON l.id = x.location_id
+            WHERE {clause}
+            ORDER BY x.created_date, x.id
+            LIMIT ? OFFSET ?""",
+        args, page, per_page)
+
+    data = [{
+        "escalationId": r["id"],
+        "escalationCode": r["escalation_code"],
+        "orgUnit": {"id": r["org_unit_id"], "type": r["org_type"], "name": r["org_name"]},
+        "location": _location(r),
+        "source": r["source"],
+        "feedbackId": r["feedback_id"],
+        "workOrderId": r["work_order_id"],
+        "category": r["category"],
+        "priority": r["priority"],
+        "level": r["level"],
+        "status": r["status"],
+        "raisedByResourceId": r["raised_by_resource_id"],
+        "assignedToResourceId": r["assigned_to_resource_id"],
+        "createdDate": r["created_date"],
+        "acknowledgedDate": r["acknowledged_date"],
+        "resolvedDate": r["resolved_date"],
+    } for r in rows]
+    return success(data, pagination, _rid(request))
+
+
+# --------------------------------------------------------------------------- #
+# Customer feedback (QR code)
+# --------------------------------------------------------------------------- #
+@app.get("/customer-feedback/qr-responses", tags=["CustomerFeedback"],
+         summary="QR-code customer feedback submissions for a date range, by site.",
+         dependencies=[Depends(require_api_key)])
+def get_qr_responses(
+    request: Request,
+    dateFrom: str = Query(..., example="2026-09-01"),
+    dateTo: str = Query(..., example="2026-09-30"),
+    orgUnitId: int | None = Query(None, example=4021),
+    page: int = PageQ,
+    per_page: int = PerPageQ,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    start, end = validate_range(dateFrom, dateTo)
+    page, per_page = validate_paging(page, per_page)
+    check_org_unit_scope(orgUnitId)
+
+    where = ["date(f.submitted_timestamp) BETWEEN ? AND ?",
+             f"f.org_unit_id IN ({_ph(SCOPED_ORG_UNIT_IDS)})"]
+    args: list = [start.isoformat(), end.isoformat(), *SCOPED_ORG_UNIT_IDS]
+    if orgUnitId is not None:
+        where.append("f.org_unit_id = ?")
+        args.append(orgUnitId)
+    clause = " AND ".join(where)
+
+    rows, pagination = _paged(
+        conn,
+        f"SELECT COUNT(*) FROM customer_feedback f WHERE {clause}",
+        f"""SELECT f.*, o.type AS org_type, o.name AS org_name, l.name AS location_name
+            FROM customer_feedback f
+            JOIN org_unit o ON o.id = f.org_unit_id
+            JOIN location l ON l.id = f.location_id
+            WHERE {clause}
+            ORDER BY f.submitted_timestamp, f.id
+            LIMIT ? OFFSET ?""",
+        args, page, per_page)
+
+    data = [{
+        "feedbackId": r["id"],
+        "orgUnit": {"id": r["org_unit_id"], "type": r["org_type"], "name": r["org_name"]},
+        "location": _location(r),
+        "qrCodeId": r["qr_code_id"],
+        "rating": r["rating"],
+        "category": r["category"],
+        "comment": r["comment"],
+        "submittedTimestamp": r["submitted_timestamp"],
+        "escalationId": r["escalation_id"],
+    } for r in rows]
+    return success(data, pagination, _rid(request))
+
+
+# --------------------------------------------------------------------------- #
+# Cleaner tracking (NFC / beacon)
+# --------------------------------------------------------------------------- #
+@app.get("/cleaner-tracking/check-ins", tags=["CleanerTracking"],
+         summary="Cleaner NFC tag scans and beacon check-ins for a date range, by site.",
+         dependencies=[Depends(require_api_key)])
+def get_cleaner_check_ins(
+    request: Request,
+    dateFrom: str = Query(..., example="2026-09-01"),
+    dateTo: str = Query(..., example="2026-09-30"),
+    orgUnitId: int | None = Query(None, example=4021),
+    resourceId: int | None = Query(None, example=88213),
+    page: int = PageQ,
+    per_page: int = PerPageQ,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    start, end = validate_range(dateFrom, dateTo)
+    page, per_page = validate_paging(page, per_page)
+    check_org_unit_scope(orgUnitId)
+
+    where = ["date(c.check_in_timestamp) BETWEEN ? AND ?",
+             f"c.org_unit_id IN ({_ph(SCOPED_ORG_UNIT_IDS)})"]
+    args: list = [start.isoformat(), end.isoformat(), *SCOPED_ORG_UNIT_IDS]
+    if orgUnitId is not None:
+        where.append("c.org_unit_id = ?")
+        args.append(orgUnitId)
+    if resourceId is not None:
+        where.append("c.resource_id = ?")
+        args.append(resourceId)
+    clause = " AND ".join(where)
+
+    rows, pagination = _paged(
+        conn,
+        f"SELECT COUNT(*) FROM cleaner_check_in c WHERE {clause}",
+        f"""SELECT c.*, o.type AS org_type, o.name AS org_name, l.name AS location_name
+            FROM cleaner_check_in c
+            JOIN org_unit o ON o.id = c.org_unit_id
+            JOIN location l ON l.id = c.location_id
+            WHERE {clause}
+            ORDER BY c.check_in_timestamp, c.id
+            LIMIT ? OFFSET ?""",
+        args, page, per_page)
+
+    data = [{
+        "checkInId": r["id"],
+        "resourceId": r["resource_id"],
+        "orgUnit": {"id": r["org_unit_id"], "type": r["org_type"], "name": r["org_name"]},
+        "location": _location(r),
+        "tagId": r["tag_id"],
+        "method": r["method"],
+        "checkInTimestamp": r["check_in_timestamp"],
+        "checkOutTimestamp": r["check_out_timestamp"],
+    } for r in rows]
+    return success(data, pagination, _rid(request))
+
+
+def _location(r: sqlite3.Row) -> dict | None:
+    if r["location_id"] is None:
+        return None
+    return {"id": r["location_id"], "name": r["location_name"]}
 
 
 def _ph(values: list) -> str:

@@ -20,7 +20,19 @@ CREATE TABLE IF NOT EXISTS employee (
     id            INTEGER PRIMARY KEY,
     employee_code TEXT NOT NULL,
     name          TEXT NOT NULL,
-    org_unit_id   INTEGER NOT NULL REFERENCES org_unit(id)
+    org_unit_id   INTEGER NOT NULL REFERENCES org_unit(id),
+    role          TEXT NOT NULL DEFAULT 'CLEANER',
+    supervisor_id INTEGER REFERENCES employee(id),
+    active        INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS location (
+    id          INTEGER PRIMARY KEY,
+    org_unit_id INTEGER NOT NULL REFERENCES org_unit(id),
+    name        TEXT NOT NULL,
+    qr_code_id  TEXT NOT NULL,
+    tag_id      TEXT NOT NULL,
+    tag_type    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS material (
@@ -48,6 +60,7 @@ CREATE TABLE IF NOT EXISTS work_order (
     status         TEXT NOT NULL,
     work_order_type TEXT NOT NULL,
     description    TEXT NOT NULL,
+    created_date   TEXT NOT NULL,
     completed_date TEXT,
     resource_id    INTEGER
 );
@@ -71,6 +84,48 @@ CREATE TABLE IF NOT EXISTS stock_movement (
     reference_document    TEXT
 );
 
+CREATE TABLE IF NOT EXISTS customer_feedback (
+    id                  INTEGER PRIMARY KEY,
+    org_unit_id         INTEGER NOT NULL REFERENCES org_unit(id),
+    location_id         INTEGER NOT NULL REFERENCES location(id),
+    qr_code_id          TEXT NOT NULL,
+    rating              INTEGER NOT NULL,
+    category            TEXT NOT NULL,
+    comment             TEXT,
+    submitted_timestamp TEXT NOT NULL,
+    escalation_id       INTEGER REFERENCES escalation(id)
+);
+
+CREATE TABLE IF NOT EXISTS escalation (
+    id                      INTEGER PRIMARY KEY,
+    escalation_code         TEXT NOT NULL,
+    org_unit_id             INTEGER NOT NULL REFERENCES org_unit(id),
+    location_id             INTEGER REFERENCES location(id),
+    source                  TEXT NOT NULL,
+    feedback_id             INTEGER REFERENCES customer_feedback(id),
+    work_order_id           INTEGER REFERENCES work_order(id),
+    category                TEXT NOT NULL,
+    priority                TEXT NOT NULL,
+    level                   INTEGER NOT NULL,
+    status                  TEXT NOT NULL,
+    raised_by_resource_id   INTEGER REFERENCES employee(id),
+    assigned_to_resource_id INTEGER REFERENCES employee(id),
+    created_date            TEXT NOT NULL,
+    acknowledged_date       TEXT,
+    resolved_date           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cleaner_check_in (
+    id                  INTEGER PRIMARY KEY,
+    resource_id         INTEGER NOT NULL REFERENCES employee(id),
+    org_unit_id         INTEGER NOT NULL REFERENCES org_unit(id),
+    location_id         INTEGER NOT NULL REFERENCES location(id),
+    tag_id              TEXT NOT NULL,
+    method              TEXT NOT NULL,
+    check_in_timestamp  TEXT NOT NULL,
+    check_out_timestamp TEXT
+);
+
 CREATE INDEX IF NOT EXISTS ix_att_date ON shift_attendance (shift_date);
 CREATE INDEX IF NOT EXISTS ix_att_org  ON shift_attendance (org_unit_id);
 CREATE INDEX IF NOT EXISTS ix_att_emp  ON shift_attendance (employee_id);
@@ -78,6 +133,14 @@ CREATE INDEX IF NOT EXISTS ix_wo_done  ON work_order (completed_date);
 CREATE INDEX IF NOT EXISTS ix_wo_org   ON work_order (org_unit_id);
 CREATE INDEX IF NOT EXISTS ix_mv_ts    ON stock_movement (transaction_timestamp);
 CREATE INDEX IF NOT EXISTS ix_mv_store ON stock_movement (store_id);
+CREATE INDEX IF NOT EXISTS ix_emp_org  ON employee (org_unit_id);
+CREATE INDEX IF NOT EXISTS ix_fb_ts    ON customer_feedback (submitted_timestamp);
+CREATE INDEX IF NOT EXISTS ix_fb_org   ON customer_feedback (org_unit_id);
+CREATE INDEX IF NOT EXISTS ix_esc_ts   ON escalation (created_date);
+CREATE INDEX IF NOT EXISTS ix_esc_org  ON escalation (org_unit_id);
+CREATE INDEX IF NOT EXISTS ix_ci_ts    ON cleaner_check_in (check_in_timestamp);
+CREATE INDEX IF NOT EXISTS ix_ci_org   ON cleaner_check_in (org_unit_id);
+CREATE INDEX IF NOT EXISTS ix_ci_res   ON cleaner_check_in (resource_id);
 """
 
 
