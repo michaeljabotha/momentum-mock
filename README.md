@@ -147,3 +147,19 @@ automatically the next time `python -m app.seed` runs.
 | [app/auth.py](app/auth.py) | `X-Api-Key` / bearer dependency |
 | [app/params.py](app/params.py) | Date-range, paging and scope validation |
 | [app/seed.py](app/seed.py) | Mock data generator |
+
+## Real data instead of generated data
+
+`tools/export_from_db.py` writes `prod_data.sql` from the bid_corp database (read-only login), using the same
+rules as the real partner API, for the three Momentum sites. When `prod_data.sql` is present, `python -m app.seed`
+loads it instead of generating data, and the Docker build bakes it into the image.
+
+```bash
+python3 tools/export_from_db.py --defaults-file ~/.config/forcelink/bid_corp.cnf   # [client] host/user/password/database
+python -m app.seed --reset                                                         # or rebuild the image
+```
+
+- Inactive resources are left out, with their shifts.
+- Cape Town's cleaners are spread evenly over its supervisors (`--split-supervisors`, mock only).
+- Stock and cleaner check-ins stay empty, as in the real API.
+- `prod_data.sql` holds real names and comments. It is git-ignored; keep it out of commits and public images.

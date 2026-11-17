@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS work_order (
     description    TEXT NOT NULL,
     created_date   TEXT NOT NULL,
     completed_date TEXT,
-    resource_id    INTEGER
+    resource_id    INTEGER,
+    location_id    INTEGER REFERENCES location(id)
 );
 
 CREATE TABLE IF NOT EXISTS stock_on_hand (
@@ -87,9 +88,10 @@ CREATE TABLE IF NOT EXISTS stock_movement (
 CREATE TABLE IF NOT EXISTS customer_feedback (
     id                  INTEGER PRIMARY KEY,
     org_unit_id         INTEGER NOT NULL REFERENCES org_unit(id),
-    location_id         INTEGER NOT NULL REFERENCES location(id),
+    location_id         INTEGER REFERENCES location(id),
     qr_code_id          TEXT NOT NULL,
     rating              INTEGER NOT NULL,
+    sentiment           TEXT,
     category            TEXT NOT NULL,
     comment             TEXT,
     submitted_timestamp TEXT NOT NULL,
@@ -112,7 +114,8 @@ CREATE TABLE IF NOT EXISTS escalation (
     assigned_to_resource_id INTEGER REFERENCES employee(id),
     created_date            TEXT NOT NULL,
     acknowledged_date       TEXT,
-    resolved_date           TEXT
+    resolved_date           TEXT,
+    comment                 TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cleaner_check_in (

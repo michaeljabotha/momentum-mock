@@ -12,6 +12,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# Real data, when tools/export_from_db.py has written it (the glob lets the build go ahead without it).
+COPY requirements.txt prod_data.sq[l] ./
 
 # Seed at build time so the container starts with data already in place.
 # The entrypoint re-seeds only if the database is missing (e.g. a mounted volume).
