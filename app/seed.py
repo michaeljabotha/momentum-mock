@@ -7,7 +7,7 @@ import random
 import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 
-from .config import DB_PATH
+from .config import DB_PATH, PROD_DATA_PATH
 from .db import connect, init_schema
 
 RNG = random.Random(20260917)
@@ -141,8 +141,10 @@ def _schema_is_current() -> bool:
     """A database seeded before the schema grew new tables/columns can't be reused."""
     conn = sqlite3.connect(DB_PATH)
     try:
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(work_order)")}
-        return "created_date" in cols
+        wo = {r[1] for r in conn.execute("PRAGMA table_info(work_order)")}
+        fb = {r[1] for r in conn.execute("PRAGMA table_info(customer_feedback)")}
+        esc = {r[1] for r in conn.execute("PRAGMA table_info(escalation)")}
+        return {"created_date", "location_id"} <= wo and "sentiment" in fb and "comment" in esc
     finally:
         conn.close()
 
@@ -157,6 +159,16 @@ def seed(reset: bool = False) -> None:
     conn = connect()
     init_schema(conn)
     cur = conn.cursor()
+
+    if PROD_DATA_PATH.exists():
+        # Real data replaces whatever is there; the script empties every table itself.
+        print(f"Loading real data from {PROD_DATA_PATH.name}...")
+        conn.executescript(PROD_DATA_PATH.read_text())
+        for table in ("org_unit", "employee", "location", "shift_attendance", "work_order",
+                      "customer_feedback", "escalation", "cleaner_check_in", "stock_on_hand"):
+            print(f"  {table:<18} {cur.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]:>7,}")
+        conn.close()
+        return
 
     if cur.execute("SELECT COUNT(*) FROM shift_attendance").fetchone()[0]:
         print(f"{DB_PATH} already seeded - pass --reset to rebuild.")

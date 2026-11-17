@@ -165,9 +165,10 @@ def get_completed_work_orders(
     rows, pagination = _paged(
         conn,
         f"SELECT COUNT(*) FROM work_order w WHERE {clause}",
-        f"""SELECT w.*, o.type AS org_type, o.name AS org_name
+        f"""SELECT w.*, o.type AS org_type, o.name AS org_name, l.name AS location_name
             FROM work_order w
             JOIN org_unit o ON o.id = w.org_unit_id
+            LEFT JOIN location l ON l.id = w.location_id
             WHERE {clause}
             ORDER BY w.org_unit_id, w.completed_date
             LIMIT ? OFFSET ?""",
@@ -177,6 +178,7 @@ def get_completed_work_orders(
         "workOrderId": r["id"],
         "workOrderCode": r["work_order_code"],
         "orgUnit": {"id": r["org_unit_id"], "type": r["org_type"], "name": r["org_name"]},
+        "location": _location(r),
         "status": r["status"],
         "workOrderType": r["work_order_type"],
         "description": r["description"],
@@ -409,6 +411,7 @@ def get_escalations(
         "createdDate": r["created_date"],
         "acknowledgedDate": r["acknowledged_date"],
         "resolvedDate": r["resolved_date"],
+        "comment": r["comment"],
     } for r in rows]
     return success(data, pagination, _rid(request))
 
@@ -446,7 +449,7 @@ def get_qr_responses(
         f"""SELECT f.*, o.type AS org_type, o.name AS org_name, l.name AS location_name
             FROM customer_feedback f
             JOIN org_unit o ON o.id = f.org_unit_id
-            JOIN location l ON l.id = f.location_id
+            LEFT JOIN location l ON l.id = f.location_id
             WHERE {clause}
             ORDER BY f.submitted_timestamp, f.id
             LIMIT ? OFFSET ?""",
@@ -458,6 +461,7 @@ def get_qr_responses(
         "location": _location(r),
         "qrCodeId": r["qr_code_id"],
         "rating": r["rating"],
+        "sentiment": r["sentiment"],
         "category": r["category"],
         "comment": r["comment"],
         "submittedTimestamp": r["submitted_timestamp"],
